@@ -24,6 +24,10 @@
   </head>
   <body>
     <div id="hud">
+      <button id="enableCam" style="background:#111827;color:#e5e7eb;border:1px solid #374151;padding:6px 10px;border-radius:8px">
+         Enable Camera
+      </button>
+
       <div class="row">
         <div><strong>SemiTwin — Marker AR</strong></div>
         <div>Status: <span id="status" class="pill">connecting…</span></div>
@@ -158,5 +162,21 @@
       marker.addEventListener('markerFound', () => { hint.setAttribute('visible', false); });
       marker.addEventListener('markerLost', () => { hint.setAttribute('visible', true); });
     </script>
+    <script>
+  const btn = document.getElementById('enableCam');
+  btn?.addEventListener('click', async () => {
+    try {
+      // Request camera with rear lens if available
+      await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
+      btn.style.display = 'none';
+      // Reload so AR.js initializes after permission granted
+      location.reload();
+    } catch (e) {
+      alert('Camera permission was denied or unavailable.');
+      console.error(e);
+    }
+  });
+</script>
+
   </body>
 </html>
