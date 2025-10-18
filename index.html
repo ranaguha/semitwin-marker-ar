@@ -1,0 +1,162 @@
+
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title>SemiTwin Marker AR</title>
+    <meta name="theme-color" content="#000000" />
+    <style>
+      html,body{margin:0;height:100%;background:#000;overflow:hidden;font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial}
+      #hud{position:fixed;top:8px;left:8px;right:8px;z-index:9999;color:#e5e7eb;background:rgba(0,0,0,.55);padding:8px;border-radius:10px;backdrop-filter:blur(6px)}
+      #hud .row{display:flex;gap:8px;justify-content:space-between;flex-wrap:wrap;align-items:center}
+      #hud code{opacity:.9}
+      #hud .pill{background:#111827;border:1px solid #1f2937;border-radius:999px;padding:4px 8px;margin-right:6px}
+      #hud .warn{color:#fca5a5}
+      #qr{font-size:12px;opacity:.85}
+      a{color:#93c5fd}
+    </style>
+    <!-- A-Frame, AR.js, Socket.IO -->
+    <script src="https://cdn.jsdelivr.net/npm/aframe@1.5.0/dist/aframe.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/ar.js@3.4.5/aframe/build/aframe-ar-nft.js"></script>
+    <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
+    <script src="./config.js"></script>
+  </head>
+  <body>
+    <div id="hud">
+      <div class="row">
+        <div><strong>SemiTwin — Marker AR</strong></div>
+        <div>Status: <span id="status" class="pill">connecting…</span></div>
+      </div>
+      <div class="row" style="font-size:12px">
+        <div>Backend: <code id="be"></code></div>
+        <div>Updated: <span id="ts">--</span></div>
+      </div>
+      <div class="row" style="font-size:12px">
+        <span class="pill">Run: <b id="run">--</b></span>
+        <span class="pill">Idle: <b id="idle">--</b></span>
+        <span class="pill">Faults: <b id="faults">--</b></span>
+        <span class="pill">Avg Yield: <b id="avg">--</b></span>
+      </div>
+      <div id="qr" class="row">
+        <div>Marker required: <a href="https://raw.githubusercontent.com/AR-js-org/AR.js/master/data/images/hiro.png" target="_blank">Print the HIRO marker</a></div>
+        <div class="warn">Note: Mobile camera access needs HTTPS. Host this page on GitHub Pages (HTTPS) or use a secure tunnel.</div>
+      </div>
+    </div>
+
+    <!-- A-Frame scene with AR.js marker (HIRO) -->
+    <a-scene
+      vr-mode-ui="enabled: false"
+      embedded
+      arjs="trackingMethod: best; sourceType: webcam; debugUIEnabled: false;">
+      
+      <!-- Camera -->
+      <a-entity camera></a-entity>
+
+      <!-- Marker: HIRO -->
+      <a-marker type="pattern" preset="hiro" id="marker">
+        <!-- Platform -->
+        <a-box id="platform" width="1.4" height="0.02" depth="0.4" color="#222831" position="0 0 0"></a-box>
+
+        <!-- Machine boxes (6) laid out along X -->
+        <a-entity id="machines"></a-entity>
+      </a-marker>
+
+      <a-entity id="fallbackText" position="0 1.6 -2" visible="false">
+        <a-text value="Point camera at HIRO marker" color="#fff" align="center"></a-text>
+      </a-entity>
+    </a-scene>
+
+    <script>
+      // ----- Config / DOM
+      const BACKEND_URL = window.BACKEND_URL || 'https://example-backend-url';
+      document.getElementById('be').textContent = BACKEND_URL;
+      const statusEl = document.getElementById('status');
+      const tsEl = document.getElementById('ts');
+      const runEl = document.getElementById('run');
+      const idleEl = document.getElementById('idle');
+      const faultsEl = document.getElementById('faults');
+      const avgEl = document.getElementById('avg');
+
+      // ----- A-Frame setup for machines
+      const MACHINE_IDS = ['DIE_ATTACH','WIRE_BOND','MOLDING','TRIM_FORM','TESTING','PACKAGING'];
+      const machinesRoot = document.getElementById('machines');
+      const boxes = new Map();
+
+      function labelPlane(text, x, y, z) {
+        const e = document.createElement('a-entity');
+        e.setAttribute('text', { value: text, color: '#fff', width: 1.5, align: 'center' });
+        e.setAttribute('position', { x, y, z });
+        return e;
+      }
+
+      function colorForStatus(s) {
+        if (s === 'RUNNING') return '#16a34a';
+        if (s === 'IDLE') return '#ca8a04';
+        if (s === 'FAULT') return '#dc2626';
+        return '#6b7280';
+      }
+
+      function buildLine() {
+        machinesRoot.innerHTML = '';
+        const spacing = 1.2 / (MACHINE_IDS.length - 1);
+        MACHINE_IDS.forEach((id, idx) => {
+          const x = -0.6 + idx * spacing;
+          const box = document.createElement('a-box');
+          box.setAttribute('width', '0.18');
+          box.setAttribute('height', '0.10');
+          box.setAttribute('depth', '0.18');
+          box.setAttribute('color', '#6b7280');
+          box.setAttribute('position', `${x} 0.06 0`);
+          box.setAttribute('shadow', 'cast: true; receive: true');
+
+          const label = labelPlane(id.replace('_',' '), 0, 0.16, 0);
+          box.appendChild(label);
+
+          machinesRoot.appendChild(box);
+          boxes.set(id, box);
+        });
+      }
+      buildLine();
+
+      // ----- Socket.IO
+      let socket = null;
+      function connectSocket() {
+        statusEl.textContent = 'connecting…';
+        socket = io(BACKEND_URL, {
+          transports: ['websocket','polling'],
+          reconnection: true,
+          reconnectionAttempts: 20,
+          reconnectionDelay: 1000
+        });
+        socket.on('connect', () => statusEl.textContent = 'connected');
+        socket.on('connect_error', (e) => { statusEl.textContent = 'error'; console.error(e); });
+        socket.on('disconnect', () => statusEl.textContent = 'disconnected');
+        socket.on('line_update', (payload) => {
+          tsEl.textContent = new Date(payload.timestamp).toLocaleTimeString();
+          const k = payload.kpis || {};
+          runEl.textContent = k.running ?? '--';
+          idleEl.textContent = k.idle ?? '--';
+          faultsEl.textContent = k.faults ?? '--';
+          avgEl.textContent = (k.avgYield != null) ? (k.avgYield + '%') : '--';
+
+          (payload.machines || []).forEach(m => {
+            const box = boxes.get(m.id);
+            if (box) {
+              box.setAttribute('color', colorForStatus(m.status));
+              const scl = Math.max(.85, Math.min(1.1, (m.yield || 95)/100));
+              box.setAttribute('scale', `${scl} 1 ${scl}`);
+            }
+          });
+        });
+      }
+      connectSocket();
+
+      // Show a hint if marker not visible
+      const marker = document.getElementById('marker');
+      const hint = document.getElementById('fallbackText');
+      marker.addEventListener('markerFound', () => { hint.setAttribute('visible', false); });
+      marker.addEventListener('markerLost', () => { hint.setAttribute('visible', true); });
+    </script>
+  </body>
+</html>
